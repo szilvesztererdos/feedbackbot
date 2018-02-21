@@ -4,8 +4,21 @@ from discord.ext.commands import Bot
 from discord.ext import commands
 import platform
 
+# constants
+MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from {} to {}.'
+
 # basic info
 client = Bot(description="feedbackbot by Sly (test version)", command_prefix="", pm_help = False)
+
+def is_admin(username):
+	for server in client.servers:
+		for member in server.members:
+			if member.name == username:
+				for role in member.roles:
+					if role.name == 'admins':
+						return True
+				return False
+	return False
 
 # This is what happens everytime the bot launches.
 @client.event
@@ -24,9 +37,12 @@ async def on_message(message):
 	# we do not want the bot to reply to itself
 	if message.author == client.user:
 		return
-
-	if message.content.startswith('hello'):
-		msg = 'Hello {0.author.mention}'.format(message)
+	elif is_admin(message.author.name):
+		if message.content.startswith('start'):
+			# TODO: parse giver and receiver
+			giver = ""
+			receiver = ""
+			msg = MESSAGE_START_CONFIRMED.format(giver, receiver)
 	else:
 		msg = 'I do not know much yet, sorry :('
 	await client.send_message(message.channel, msg)
