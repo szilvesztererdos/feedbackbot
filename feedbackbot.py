@@ -64,7 +64,7 @@ async def on_ready():
     print('https://discordapp.com/oauth2/authorize?client_id={}&scope=bot&permissions=8'.format(client.user.id))
 
     # This is buggy, let us know if it doesn't work.
-    return await client.change_presence(game=discord.Game(name='PLAYING STATUS HERE'))
+    return await client.change_presence(game=discord.Game(name='Feedback game ;)'))
 
 
 @client.event
