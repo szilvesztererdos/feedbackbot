@@ -10,10 +10,15 @@ MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can''t recognize that command.'
 MESSAGE_START_USAGE = 'Try `start @giver @receiver`!'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
+MESSAGE_ASK_FOR_FEEDBACK = 'Hi! It''s feedback time! Please write your feedback to {}! Be specific, extended and give' +
+'your feedback on behavior. And don''t forget to give more positive feedback than negative!'
 
 # custom exceptions
+
+
 class MemberNotFound(Exception):
     pass
+
 
 # basic info
 client = Bot(description="feedbackbot by Sly (test version)",
@@ -35,7 +40,7 @@ def is_admin(user_id):
 def get_member_by_username(username_string):
     """Returns the Member object if it's found on any of the servers the bot is connected to.
     Otherwise, raises an exception."""
-    
+
     # username and discriminator like @szilveszter.erdos#7945
     elements = username_string.strip('@').split('#')
     username = elements[0]
@@ -78,17 +83,18 @@ async def on_message(message):
             # because usage is `start @giver @receiver`
             if len(msg_elements) == 3:
                 try:
-                    # TODO: check if there is a discriminator
                     giver = get_member_by_username(msg_elements[1])
                     receiver = get_member_by_username(msg_elements[2])
-                    msg = MESSAGE_START_CONFIRMED.format(giver.mention, receiver.mention)
+                    msg = MESSAGE_START_CONFIRMED.format(
+                        giver.mention, receiver.mention)
+
+                    # asking for feedback
+                    await client.send_message(giver, MESSAGE_ASK_FOR_FEEDBACK.format(giver))
+
                 except MemberNotFound as e:
                     msg = str(e)
-                
-                # TODO: asking for feedback
             else:
                 msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
-
         else:
             msg = MESSAGE_NOT_A_COMMAND_ADMIN + ' ' + MESSAGE_START_USAGE
     else:
