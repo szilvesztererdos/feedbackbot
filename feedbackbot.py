@@ -32,9 +32,18 @@ def is_admin(user_id):
     return False
 
 
-def get_member_by_username(username, discriminator):
+def get_member_by_username(username_string):
     """Returns the Member object if it's found on any of the servers the bot is connected to.
     Otherwise, raises an exception."""
+    
+    # username and discriminator like @szilveszter.erdos#7945
+    elements = username_string.strip('@').split('#')
+    username = elements[0]
+    if len(elements) > 1:
+        discriminator = elements[1]
+    else:
+        discriminator = ''
+
     for server in client.servers:
         for member in server.members:
             if member.name == username and member.discriminator == discriminator:
@@ -66,15 +75,12 @@ async def on_message(message):
     elif is_admin(message.author.id):
         if message.content.startswith('start'):
             msg_elements = message.content.split()
-            # username and discriminator like @szilveszter.erdos#7945
-            giver_elements = msg_elements[1].strip('@').split('#')
-            receiver_elements = msg_elements[2].strip('@').split('#')
             # because usage is `start @giver @receiver`
             if len(msg_elements) == 3:
                 try:
                     # TODO: check if there is a discriminator
-                    giver = get_member_by_username(giver_elements[0], giver_elements[1])
-                    receiver = get_member_by_username(receiver_elements[0], receiver_elements[1])
+                    giver = get_member_by_username(msg_elements[1])
+                    receiver = get_member_by_username(msg_elements[2])
                     msg = MESSAGE_START_CONFIRMED.format(giver.mention, receiver.mention)
                 except MemberNotFound as e:
                     msg = str(e)
