@@ -10,19 +10,23 @@ MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can''t recognize that command.'
 MESSAGE_START_USAGE = 'Try `start @giver @receiver`!'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
-MESSAGE_ASK_FOR_FEEDBACK = 'Hi! It''s feedback time! Please write your feedback to {}! Be specific, extended and give' +
-'your feedback on behavior. And don''t forget to give more positive feedback than negative!'
-
-# custom exceptions
+MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It''s feedback time! Please write your feedback to `{}`! '
+                            'Be specific, extended and give your feedback on behavior. '
+                            'And don''t forget to give more positive feedback than negative!')
+MESSAGE_FEEDBACK_CONFIRMED = 'You''ve given `{}` the following feedback: {}. Thank you!'
 
 
 class MemberNotFound(Exception):
     pass
 
 
-# basic info
+# global variables
 client = Bot(description="feedbackbot by Sly (test version)",
              command_prefix="", pm_help=False)
+database = {
+        'members-asked': {},
+        'feedbacks': {}
+    }
 
 
 def is_admin(user_id):
@@ -89,7 +93,8 @@ async def on_message(message):
                         giver.mention, receiver.mention)
 
                     # asking for feedback
-                    await client.send_message(giver, MESSAGE_ASK_FOR_FEEDBACK.format(giver))
+                    await client.send_message(giver, MESSAGE_ASK_FOR_FEEDBACK.format(receiver))
+                    database['members-asked'][giver.id] = receiver.name
 
                 except MemberNotFound as e:
                     msg = str(e)
@@ -98,7 +103,22 @@ async def on_message(message):
         else:
             msg = MESSAGE_NOT_A_COMMAND_ADMIN + ' ' + MESSAGE_START_USAGE
     else:
-        msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
+        if message.author.id in database['members-asked']:
+            # if there is no feedback for this receiver yet, create list
+            receiver_name = database['members-asked'][message.author.id]
+            if receiver_name not in database['feedbacks']:
+                database['feedbacks'][receiver_name] = []
+            
+            database['feedbacks'][receiver_name].append(
+                {
+                    'giver': message.author.id,
+                    'message': message.content
+                }
+            )
+            msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_name, message.content)
+            del database['members-asked'][message.author.id]
+        else:
+            msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
     await client.send_message(message.channel, msg)
 
 client.run('NDE0NjY4NzM2MDc1NjYxMzIz.DWquiw.IDGdnR_vw6SYPbPs-7ZBVCk8H7Y')
