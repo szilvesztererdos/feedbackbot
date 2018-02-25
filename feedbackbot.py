@@ -5,16 +5,18 @@ from discord.ext import commands
 import platform
 
 # constants
-MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from {} to {}.'
+MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@{}> to <@{}>.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
-MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can''t recognize that command.'
-MESSAGE_START_USAGE = 'Try `start @giver @receiver`!'
+MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
-MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It''s feedback time! Please write your feedback to `{}`! '
-                            'Be specific, extended and give your feedback on behavior. '
-                            'And don''t forget to give more positive feedback than negative!')
-MESSAGE_FEEDBACK_CONFIRMED = 'You''ve given `{}` the following feedback: {}. Thank you!'
 
+
+MESSAGE_START_USAGE = 'Try `start @giver @receiver`!'
+MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback to <@{}>! '
+                            'Be specific, extended and give your feedback on behavior. '
+                            'And don\'t forget to give more positive feedback than negative!')
+MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given <@{}> the following feedback: {}. Thank you!'
+MESSAGE_GOT_FEEDBACK = 'You got the following feedback from <@{}>: {}'
 
 class MemberNotFound(Exception):
     pass
@@ -90,11 +92,11 @@ async def on_message(message):
                     giver = get_member_by_username(msg_elements[1])
                     receiver = get_member_by_username(msg_elements[2])
                     msg = MESSAGE_START_CONFIRMED.format(
-                        giver.mention, receiver.mention)
+                        giver.id, receiver.id)
 
                     # asking for feedback
-                    await client.send_message(giver, MESSAGE_ASK_FOR_FEEDBACK.format(receiver))
-                    database['members-asked'][giver.id] = receiver.name
+                    await client.send_message(giver, MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id))
+                    database['members-asked'][giver.id] = {'receiver': receiver}
 
                 except MemberNotFound as e:
                     msg = str(e)
@@ -104,14 +106,15 @@ async def on_message(message):
             msg = MESSAGE_NOT_A_COMMAND_ADMIN + ' ' + MESSAGE_START_USAGE
     else:
         if message.author.id in database['members-asked']:
+            giver = message.author
             # if there is no feedback for this receiver yet, create list
-            receiver_name = database['members-asked'][message.author.id]
-            if receiver_name not in database['feedbacks']:
-                database['feedbacks'][receiver_name] = []
+            receiver = database['members-asked'][giver.id]['receiver']
+            if receiver.id not in database['feedbacks']:
+                database['feedbacks'][receiver.id] = []
             
-            database['feedbacks'][receiver_name].append(
+            database['feedbacks'][receiver.id].append(
                 {
-                    'giver': message.author.id,
+                    'giver': giver.id,
                     'message': message.content
                 }
             )
