@@ -118,8 +118,9 @@ async def on_message(message):
                     'message': message.content
                 }
             )
-            msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_name, message.content)
-            del database['members-asked'][message.author.id]
+            msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver.id, message.content)
+            await client.send_message(receiver, MESSAGE_GOT_FEEDBACK.format(giver.id, database['feedbacks'][receiver.id][0]['message']))
+            del database['members-asked'][giver.id]
         else:
             msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
     await client.send_message(message.channel, msg)
