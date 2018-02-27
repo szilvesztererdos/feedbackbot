@@ -3,20 +3,25 @@ import asyncio
 from discord.ext.commands import Bot
 from discord.ext import commands
 import platform
+import logging
 
 # constants
 MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@{}> to <@{}>.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
-
-
 MESSAGE_START_USAGE = 'Try `start @giver @receiver`!'
 MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback to <@{}>! '
                             'Be specific, extended and give your feedback on behavior. '
                             'And don\'t forget to give more positive feedback than negative!')
 MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given <@{}> the following feedback: {}. Thank you!'
 MESSAGE_GOT_FEEDBACK = 'You got the following feedback from <@{}>: {}'
+LOG_GOT_MESSAGE = 'Got message from user {}: {}'
+LOG_SENDING_MESSAGE = 'Sending message to user {}: {}'
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('feedbackbot')
+
 
 class MemberNotFound(Exception):
     pass
@@ -95,7 +100,9 @@ async def on_message(message):
                         giver.id, receiver.id)
 
                     # asking for feedback
-                    await client.send_message(giver, MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id))
+                    msg2 = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
+                    logger.info(LOG_SENDING_MESSAGE.format(giver.name, msg2))
+                    await client.send_message(giver, msg2)
                     database['members-asked'][giver.id] = {'receiver': receiver}
 
                 except MemberNotFound as e:
@@ -119,10 +126,14 @@ async def on_message(message):
                 }
             )
             msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver.id, message.content)
-            await client.send_message(receiver, MESSAGE_GOT_FEEDBACK.format(giver.id, database['feedbacks'][receiver.id][0]['message']))
+            msg2 = MESSAGE_GOT_FEEDBACK.format(giver.id, database['feedbacks'][receiver.id][0]['message'])
+            logger.info(LOG_SENDING_MESSAGE.format(receiver.name, msg2))
+            await client.send_message(receiver, msg2)
             del database['members-asked'][giver.id]
         else:
             msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
+    logger.info(LOG_GOT_MESSAGE.format(message.channel.user.name, message.content))
+    logger.info(LOG_SENDING_MESSAGE.format(message.channel.user.name, msg))
     await client.send_message(message.channel, msg)
 
 client.run('NDE0NjY4NzM2MDc1NjYxMzIz.DWquiw.IDGdnR_vw6SYPbPs-7ZBVCk8H7Y')
