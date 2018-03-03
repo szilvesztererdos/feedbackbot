@@ -4,6 +4,7 @@ from discord.ext.commands import Bot
 from discord.ext import commands
 import platform
 import logging
+import os
 
 # constants
 MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@{}> to <@{}>.'
@@ -18,10 +19,10 @@ MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given <@{}> the following feedback: {}. Th
 MESSAGE_GOT_FEEDBACK = 'You got the following feedback from <@{}>: {}'
 LOG_GOT_MESSAGE = 'Got message from user {}: {}'
 LOG_SENDING_MESSAGE = 'Sending message to user {}: {}'
+ENVVAR_TOKEN = 'FEEDBACKBOT_TOKEN'
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('feedbackbot')
-
 
 class MemberNotFound(Exception):
     pass
@@ -136,4 +137,10 @@ async def on_message(message):
     logger.info(LOG_SENDING_MESSAGE.format(message.channel.user.name, msg))
     await client.send_message(message.channel, msg)
 
-client.run('NDE0NjY4NzM2MDc1NjYxMzIz.DWquiw.IDGdnR_vw6SYPbPs-7ZBVCk8H7Y')
+
+if __name__ == '__main__':
+    if ENVVAR_TOKEN in os.environ:
+        token = os.environ.get(ENVVAR_TOKEN)
+        client.run(token)
+    else:
+        print("Please define an environment variable named {} and put the secret token into it!".format(ENVVAR_TOKEN))
