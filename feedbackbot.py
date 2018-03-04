@@ -5,6 +5,8 @@ from discord.ext import commands
 import platform
 import logging
 import os
+import pymongo
+from urllib.parse import urlparse
 
 # constants
 MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@{}> to <@{}>.'
@@ -31,10 +33,16 @@ class MemberNotFound(Exception):
 # global variables
 client = Bot(description="feedbackbot by Sly (test version)",
              command_prefix="", pm_help=False)
-database = {
-        'members-asked': {},
-        'feedbacks': {}
-    }
+
+mongodb_uri = os.environ.get('MONGODB_URI')
+try:
+    conn = pymongo.MongoClient(mongodb_uri)
+    logger.info('Database connection successful.')
+except pymongo.errors.ConnectionFailure as e:
+    logger.error('Could not connect to MongoDB: {}'.format(e))
+
+db = conn[urlparse(mongodb_uri).path[1:]]
+
 
 
 def is_admin(user_id):
@@ -104,7 +112,16 @@ async def on_message(message):
                     msg2 = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
                     logger.info(LOG_SENDING_MESSAGE.format(giver.name, msg2))
                     await client.send_message(giver, msg2)
-                    database['members-asked'][giver.id] = {'receiver': receiver}
+                    db['members-asked'].update_one(
+                        {'id': giver.id},
+                        {
+                            '$set': {
+                                'receiver_id': receiver.id,
+                                'receiver_name': receiver.name
+                            }
+                        },
+                        upsert=True
+                    )
 
                 except MemberNotFound as e:
                     msg = str(e)
@@ -113,24 +130,29 @@ async def on_message(message):
         else:
             msg = MESSAGE_NOT_A_COMMAND_ADMIN + ' ' + MESSAGE_START_USAGE
     else:
-        if message.author.id in database['members-asked']:
-            giver = message.author
-            # if there is no feedback for this receiver yet, create list
-            receiver = database['members-asked'][giver.id]['receiver']
-            if receiver.id not in database['feedbacks']:
-                database['feedbacks'][receiver.id] = []
-            
-            database['feedbacks'][receiver.id].append(
+        giver = message.author
+        giver_details = db['members-asked'].find_one({'id': giver.id})
+        if giver_details is not None:
+            receiver_id = giver_details['receiver_id']
+            receiver_name = giver_details['receiver_name']
+            db['feedbacks'].update_one(
+                {'id': receiver_id},
                 {
-                    'giver': giver.id,
-                    'message': message.content
-                }
+                    '$push': {
+                        'feedback': {
+                            'giver': giver.id,
+                            'message': message.content
+                        }
+                    }
+                },
+                upsert=True
             )
-            msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver.id, message.content)
-            msg2 = MESSAGE_GOT_FEEDBACK.format(giver.id, database['feedbacks'][receiver.id][0]['message'])
-            logger.info(LOG_SENDING_MESSAGE.format(receiver.name, msg2))
-            await client.send_message(receiver, msg2)
-            del database['members-asked'][giver.id]
+
+            msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_id, message.content)
+            msg2 = MESSAGE_GOT_FEEDBACK.format(giver.id, db['feedbacks'].find_one({'id': receiver_id})['feedback'][0]['message'])
+            logger.info(LOG_SENDING_MESSAGE.format(receiver_name, msg2))
+            await client.send_message(await client.get_user_info(receiver_id), msg2)
+            db['members-asked'].remove({'id': giver.id})
         else:
             msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
     logger.info(LOG_GOT_MESSAGE.format(message.channel.user.name, message.content))
