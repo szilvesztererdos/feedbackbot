@@ -13,18 +13,21 @@ MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@{}> to <@{}>.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
-MESSAGE_START_USAGE = 'Try `start @giver @receiver`!'
+MESSAGE_START_USAGE = 'If you want to start a session, try `start @giver @receiver`!'
 MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback to <@{}>! '
                             'Be specific, extended and give your feedback on behavior. '
                             'And don\'t forget to give more positive feedback than negative!')
 MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given <@{}> the following feedback: {}. Thank you!'
 MESSAGE_GOT_FEEDBACK = 'You got the following feedback from <@{}>: {}'
+MESSAGE_LIST_FEEDBACK = 'You have got the following feedback until now: \n{}'
+MESSAGE_NO_FEEDBACK_AVAILABLE = 'Sorry, you haven''t got any feedback until now. Maybe you should ask for one? ;)'
 LOG_GOT_MESSAGE = 'Got message from user {}: {}'
 LOG_SENDING_MESSAGE = 'Sending message to user {}: {}'
 ENVVAR_TOKEN = 'FEEDBACKBOT_TOKEN'
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('feedbackbot')
+
 
 class MemberNotFound(Exception):
     pass
@@ -42,7 +45,6 @@ except pymongo.errors.ConnectionFailure as e:
     logger.error('Could not connect to MongoDB: {}'.format(e))
 
 db = conn[urlparse(mongodb_uri).path[1:]]
-
 
 
 def is_admin(user_id):
@@ -97,62 +99,79 @@ async def on_message(message):
     # we do not want the bot to reply to itself
     if message.author == client.user:
         return
-    elif is_admin(message.author.id):
-        if message.content.startswith('start'):
-            msg_elements = message.content.split()
-            # because usage is `start @giver @receiver`
-            if len(msg_elements) == 3:
-                try:
-                    giver = get_member_by_username(msg_elements[1])
-                    receiver = get_member_by_username(msg_elements[2])
-                    msg = MESSAGE_START_CONFIRMED.format(
-                        giver.id, receiver.id)
+    # admin starting the session
+    elif message.content.startswith('start') and is_admin(message.author.id):
+        msg_elements = message.content.split()
+        # because usage is `start @giver @receiver`
+        if len(msg_elements) == 3:
+            try:
+                giver = get_member_by_username(msg_elements[1])
+                receiver = get_member_by_username(msg_elements[2])
+                msg = MESSAGE_START_CONFIRMED.format(
+                    giver.id, receiver.id)
 
-                    # asking for feedback
-                    msg2 = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
-                    logger.info(LOG_SENDING_MESSAGE.format(giver.name, msg2))
-                    await client.send_message(giver, msg2)
-                    db['members-asked'].update_one(
-                        {'id': giver.id},
-                        {
-                            '$set': {
-                                'receiver_id': receiver.id,
-                                'receiver_name': receiver.name
-                            }
-                        },
-                        upsert=True
-                    )
-
-                except MemberNotFound as e:
-                    msg = str(e)
-            else:
-                msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
-        else:
-            msg = MESSAGE_NOT_A_COMMAND_ADMIN + ' ' + MESSAGE_START_USAGE
-    else:
-        giver = message.author
-        giver_details = db['members-asked'].find_one({'id': giver.id})
-        if giver_details is not None:
-            receiver_id = giver_details['receiver_id']
-            receiver_name = giver_details['receiver_name']
-            db['feedbacks'].update_one(
-                {'id': receiver_id},
-                {
-                    '$push': {
-                        'feedback': {
-                            'giver': giver.id,
-                            'message': message.content
+                # asking for feedback
+                msg2 = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
+                logger.info(LOG_SENDING_MESSAGE.format(giver.name, msg2))
+                await client.send_message(giver, msg2)
+                db['members-asked'].update_one(
+                    {'id': giver.id},
+                    {
+                        '$set': {
+                            'receiver_id': receiver.id,
+                            'receiver_name': receiver.name
                         }
-                    }
-                },
-                upsert=True
-            )
+                    },
+                    upsert=True
+                )
 
-            msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_id, message.content)
-            msg2 = MESSAGE_GOT_FEEDBACK.format(giver.id, db['feedbacks'].find_one({'id': receiver_id})['feedback'][0]['message'])
-            logger.info(LOG_SENDING_MESSAGE.format(receiver_name, msg2))
-            await client.send_message(await client.get_user_info(receiver_id), msg2)
-            db['members-asked'].remove({'id': giver.id})
+            except MemberNotFound as e:
+                msg = str(e)
+        else:
+            msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
+    # TODO: include timestamp
+    # TODO: show nickname instead of username
+    # receiver listing feedback
+    elif message.content.startswith('list'):
+        receiver_details = db['feedbacks'].find_one({'id': message.author.id})
+        if receiver_details is not None:
+            feedback_list = []
+            for feedback in receiver_details['feedback']:
+                user = await client.get_user_info(feedback['giver'])
+                feedback_list.append(user.name + ': ' + feedback['message'])
+            
+            feedback_list_str = '\n'.join(feedback_list)
+            msg = MESSAGE_LIST_FEEDBACK.format(feedback_list_str)
+        else:
+            msg = MESSAGE_NO_FEEDBACK_AVAILABLE
+    # giver sending a feedback
+    elif db['members-asked'].find_one({'id': message.author.id}) is not None:
+        giver_details = db['members-asked'].find_one({'id': message.author.id})
+        giver = message.author
+        receiver_id = giver_details['receiver_id']
+        receiver_name = giver_details['receiver_name']
+        db['feedbacks'].update_one(
+            {'id': receiver_id},
+            {
+                '$push': {
+                    'feedback': {
+                        'giver': giver.id,
+                        'message': message.content
+                    }
+                }
+            },
+            upsert=True
+        )
+
+        msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_id, message.content)
+        msg2 = MESSAGE_GOT_FEEDBACK.format(giver.id, db['feedbacks'].find_one({'id': receiver_id})['feedback'][0]['message'])
+        logger.info(LOG_SENDING_MESSAGE.format(receiver_name, msg2))
+        await client.send_message(await client.get_user_info(receiver_id), msg2)
+        db['members-asked'].remove({'id': giver.id})
+    # not matching any case
+    else:
+        if is_admin(message.author.id):
+            msg = MESSAGE_NOT_A_COMMAND_ADMIN + ' ' + MESSAGE_START_USAGE
         else:
             msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
     logger.info(LOG_GOT_MESSAGE.format(message.channel.user.name, message.content))
