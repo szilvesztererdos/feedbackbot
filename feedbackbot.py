@@ -7,6 +7,7 @@ import logging
 import os
 import pymongo
 from urllib.parse import urlparse
+from datetime import datetime
 
 # constants
 MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@{}> to <@{}>.'
@@ -129,7 +130,6 @@ async def on_message(message):
                 msg = str(e)
         else:
             msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
-    # TODO: include timestamp
     # TODO: show nickname instead of username
     # receiver listing feedback
     elif message.content.startswith('list'):
@@ -138,7 +138,8 @@ async def on_message(message):
             feedback_list = []
             for feedback in receiver_details['feedback']:
                 user = await client.get_user_info(feedback['giver'])
-                feedback_list.append(user.name + ': ' + feedback['message'])
+                feedback_list.append('{} ({:%Y.%m.%d. %H:%M}): {}\n'.format(
+                    user.name, feedback['datetime'], feedback['message']))
             
             feedback_list_str = '\n'.join(feedback_list)
             msg = MESSAGE_LIST_FEEDBACK.format(feedback_list_str)
@@ -156,7 +157,8 @@ async def on_message(message):
                 '$push': {
                     'feedback': {
                         'giver': giver.id,
-                        'message': message.content
+                        'message': message.content,
+                        'datetime': datetime.now()
                     }
                 }
             },
