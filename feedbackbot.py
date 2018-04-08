@@ -166,7 +166,9 @@ async def on_message(message):
         )
 
         msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_id, message.content)
-        msg2 = MESSAGE_GOT_FEEDBACK.format(giver.id, db['feedbacks'].find_one({'id': receiver_id})['feedback'][0]['message'])
+        received_feedbacks = db['feedbacks'].find_one({'id': receiver_id})['feedback']
+        current_feedback = max(received_feedbacks, key=lambda feedback: feedback['datetime'])
+        msg2 = MESSAGE_GOT_FEEDBACK.format(giver.id, current_feedback['message'])
         logger.info(LOG_SENDING_MESSAGE.format(receiver_name, msg2))
         await client.send_message(await client.get_user_info(receiver_id), msg2)
         db['members-asked'].remove({'id': giver.id})
