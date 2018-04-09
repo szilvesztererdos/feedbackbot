@@ -130,7 +130,6 @@ async def on_message(message):
                 msg = str(e)
         else:
             msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
-    # TODO: show nickname instead of username
     # receiver listing feedback
     elif message.content.startswith('list'):
         receiver_details = db['feedbacks'].find_one({'id': message.author.id})
@@ -138,8 +137,9 @@ async def on_message(message):
             feedback_list = []
             for feedback in receiver_details['feedback']:
                 user = await client.get_user_info(feedback['giver'])
+                member = get_member_by_username(user.name + '#' + user.discriminator)
                 feedback_list.append('{} ({:%Y.%m.%d. %H:%M}): {}\n'.format(
-                    user.name, feedback['datetime'], feedback['message']))
+                    member.nick, feedback['datetime'], feedback['message']))
             
             feedback_list_str = '\n'.join(feedback_list)
             msg = MESSAGE_LIST_FEEDBACK.format(feedback_list_str)
