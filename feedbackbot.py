@@ -136,10 +136,8 @@ async def on_message(message):
         if receiver_details is not None:
             feedback_list = []
             for feedback in receiver_details['feedback']:
-                user = await client.get_user_info(feedback['giver'])
-                member = get_member_by_username(user.name + '#' + user.discriminator)
-                feedback_list.append('{} ({:%Y.%m.%d. %H:%M}): {}\n'.format(
-                    member.nick, feedback['datetime'], feedback['message']))
+            feedback_list.append('<@!{}> ({:%Y.%m.%d. %H:%M}): {}\n'.format(
+                feedback['giver'], feedback['datetime'], feedback['message']))
             
             feedback_list_str = '\n'.join(feedback_list)
             msg = MESSAGE_LIST_FEEDBACK.format(feedback_list_str)
