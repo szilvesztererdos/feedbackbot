@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from datetime import datetime
 
 # constants
-MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@{}> to <@{}>.'
+MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@!{}> to <@!{}>.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
@@ -18,8 +18,8 @@ MESSAGE_START_USAGE = 'If you want to start a session, try `start @giver @receiv
 MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback to <@{}>! '
                             'Be specific, extended and give your feedback on behavior. '
                             'And don\'t forget to give more positive feedback than negative!')
-MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given <@{}> the following feedback: {}. Thank you!'
-MESSAGE_GOT_FEEDBACK = 'You got the following feedback from <@{}>: {}'
+MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given <@!{}> the following feedback: {}. Thank you!'
+MESSAGE_GOT_FEEDBACK = 'You got the following feedback from <@!{}>: {}'
 MESSAGE_LIST_FEEDBACK = 'You have got the following feedback until now: \n{}'
 MESSAGE_NO_FEEDBACK_AVAILABLE = 'Sorry, you haven''t got any feedback until now. Maybe you should ask for one? ;)'
 LOG_GOT_MESSAGE = 'Got message from user {}: {}'
