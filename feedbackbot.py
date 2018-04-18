@@ -34,6 +34,9 @@ class MemberNotFound(Exception):
     pass
 
 
+class RoleOrMemberNotFound(Exception):
+    pass
+
 # global variables
 client = Bot(description="feedbackbot by Sly (test version)",
              command_prefix="", pm_help=False)
@@ -79,6 +82,17 @@ def get_member_by_username(username_string):
     raise MemberNotFound('Username `{}` not found.'.format(username))
 
 
+def get_member_or_role(name_string):
+    try:
+        return get_member_by_username(name_string)
+    except MemberNotFound:
+        for server in client.servers:
+            for role in server.roles:
+                if role.name == name_string:
+                    return role
+        raise RoleOrMemberNotFound('Username or role `{}` not found.'.format(name_string))
+
+
 @client.event
 async def on_ready():
     """This is what happens everytime the bot launches. """
@@ -107,30 +121,35 @@ async def handle_start(message):
     msg_elements = message.content.split()
     # because usage is `start @giver @receiver`
     if len(msg_elements) == 3:
+        # get member or role and confirm command
         try:
-            # confirm command
-            giver = get_member_by_username(msg_elements[1])
-            receiver = get_member_by_username(msg_elements[2])
+            giver = get_member_or_role(msg_elements[1])
+            receiver = get_member_or_role(msg_elements[2])
+        except RoleOrMemberNotFound as e:
+            msg = str(e)
+            await send_msg(message.channel.user, msg)
+        else:
             msg = MESSAGE_START_CONFIRMED.format(giver.id, receiver.id)
             await send_msg(message.channel.user, msg)
 
             # asking for feedback
-            msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
-            await send_msg(giver, msg)
-            db['members-asked'].update_one(
-                {'id': giver.id},
-                {
-                    '$set': {
-                        'receiver_id': receiver.id,
-                        'receiver_name': receiver.name
-                    }
-                },
-                upsert=True
-            )
+            if isinstance(receiver, discord.Member) and isinstance(giver, discord.Member):
+                msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
+                await send_msg(giver, msg)
+                db['members-asked'].update_one(
+                    {'id': giver.id},
+                    {
+                        '$set': {
+                            'receiver_id': receiver.id,
+                            'receiver_name': receiver.name
+                        }
+                    },
+                    upsert=True
+                )
+            else:
+                # TODO ask all receivers in that role
+                pass
 
-        except MemberNotFound as e:
-            msg = str(e)
-            await send_msg(message.channel.user, msg)
     else:
         msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
         await send_msg(message.channel.user, msg)
