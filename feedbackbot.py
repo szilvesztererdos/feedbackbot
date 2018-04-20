@@ -209,6 +209,9 @@ async def on_message(message):
     # we do not want the bot to reply to itself
     if message.author == client.user:
         return
+    # we do not want the bot to reply not in a pm
+    elif message.channel.type.name != 'private':
+        return
     # admin starting the session
     elif message.content.startswith('start') and is_admin(message.author.id):
         await handle_start(message)
