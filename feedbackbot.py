@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from datetime import datetime
 
 # constants
-MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@!{}> to <@!{}>.'
+MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from {} to {}.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
@@ -83,14 +83,28 @@ def get_member_by_username(username_string):
 
 
 def get_member_or_role(name_string):
+    """Returns the member/mention or members of a role/mention in a list on any of the servers 
+    the bot is connected to. Otherwise, raises an exception."""
     try:
-        return get_member_by_username(name_string)
+        member = get_member_by_username(name_string)
+        return [member], member.mention
     except MemberNotFound:
+        members = []
+        name_string = name_string.strip('@')
         for server in client.servers:
-            for role in server.roles:
-                if role.name == name_string:
-                    return role
-        raise RoleOrMemberNotFound('Username or role `{}` not found.'.format(name_string))
+            for server_role in server.roles:
+                if server_role.name == name_string:
+                    # search for all members with that role
+                    for member in server.members:
+                        for member_role in member.roles:
+                            if member_role == server_role:
+                                members.append(member)
+                                break
+                    break
+        if members:
+            return members, server_role.mention
+        else:
+            raise RoleOrMemberNotFound('Username or role `{}` not found.'.format(name_string))
 
 
 @client.event
@@ -114,6 +128,19 @@ async def send_msg(user, msg):
     logger.info(LOG_SENDING_MESSAGE.format(user, msg))
     await client.send_message(user, msg)
 
+async def ask_feedback(receiver, giver):
+    msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
+    await send_msg(giver, msg)
+    db['members-asked'].update_one(
+        {'id': giver.id},
+        {
+            '$set': {
+                'receiver_id': receiver.id,
+                'receiver_name': receiver.name
+            }
+        },
+        upsert=True
+    )
 
 async def handle_start(message):
     """Handles the `start @giver @receiver` command issued by an admin and starts a
@@ -123,32 +150,19 @@ async def handle_start(message):
     if len(msg_elements) == 3:
         # get member or role and confirm command
         try:
-            giver = get_member_or_role(msg_elements[1])
-            receiver = get_member_or_role(msg_elements[2])
+            givers, giver_mention = get_member_or_role(msg_elements[1])
+            receivers, receiver_mention = get_member_or_role(msg_elements[2])
         except RoleOrMemberNotFound as e:
             msg = str(e)
             await send_msg(message.channel.user, msg)
         else:
-            msg = MESSAGE_START_CONFIRMED.format(giver.id, receiver.id)
+            msg = MESSAGE_START_CONFIRMED.format(giver_mention, receiver_mention)
             await send_msg(message.channel.user, msg)
 
             # asking for feedback
-            if isinstance(receiver, discord.Member) and isinstance(giver, discord.Member):
-                msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
-                await send_msg(giver, msg)
-                db['members-asked'].update_one(
-                    {'id': giver.id},
-                    {
-                        '$set': {
-                            'receiver_id': receiver.id,
-                            'receiver_name': receiver.name
-                        }
-                    },
-                    upsert=True
-                )
-            else:
-                # TODO ask all receivers in that role
-                pass
+            for giver in givers:
+                for receiver in receivers:
+                    await ask_feedback(receiver, giver)
 
     else:
         msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
@@ -230,7 +244,10 @@ async def on_message(message):
             msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
             await send_msg(message.channel, msg)
     
-    logger.info(LOG_GOT_MESSAGE.format(message.channel.user.name, message.content))
+    try:
+        logger.info(LOG_GOT_MESSAGE.format(message.channel.user.name, message.content))
+    except AttributeError:
+        logger.info(LOG_GOT_MESSAGE.format(message.channel, message.content))
 
 
 if __name__ == '__main__':
