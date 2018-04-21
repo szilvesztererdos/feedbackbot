@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from datetime import datetime
 
 # constants
-MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from <@!{}> to <@!{}>.'
+MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from {} to {}.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
@@ -33,6 +33,9 @@ logger = logging.getLogger('feedbackbot')
 class MemberNotFound(Exception):
     pass
 
+
+class RoleOrMemberNotFound(Exception):
+    pass
 
 # global variables
 client = Bot(description="feedbackbot by Sly (test version)",
@@ -79,6 +82,31 @@ def get_member_by_username(username_string):
     raise MemberNotFound('Username `{}` not found.'.format(username))
 
 
+def get_member_or_role(name_string):
+    """Returns the member/mention or members of a role/mention in a list on any of the servers 
+    the bot is connected to. Otherwise, raises an exception."""
+    try:
+        member = get_member_by_username(name_string)
+        return [member], member.mention
+    except MemberNotFound:
+        members = []
+        name_string = name_string.strip('@')
+        for server in client.servers:
+            for server_role in server.roles:
+                if server_role.name == name_string:
+                    # search for all members with that role
+                    for member in server.members:
+                        for member_role in member.roles:
+                            if member_role == server_role:
+                                members.append(member)
+                                break
+                    break
+        if members:
+            return members, '@' + server_role.name
+        else:
+            raise RoleOrMemberNotFound('Username or role `{}` not found.'.format(name_string))
+
+
 @client.event
 async def on_ready():
     """This is what happens everytime the bot launches. """
@@ -101,36 +129,65 @@ async def send_msg(user, msg):
     await client.send_message(user, msg)
 
 
+async def process_ask_queue(giver):
+    next_to_ask = db['ask-queue'].find_one(
+            {
+                'id': giver.id,
+                'status': 'to-ask'
+            }
+        )
+    if next_to_ask:
+        receiver_id = next_to_ask['receiver_id']
+        msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver_id)
+        await send_msg(giver, msg)
+        db['ask-queue'].update(
+            {
+                'id': giver.id,
+                'receiver_id': receiver_id
+            },
+            {
+                '$set': {
+                    'status': 'asked'
+                }
+            }
+        )
+
+
+def push_ask_queue(receiver, giver):
+    db['ask-queue'].insert(
+        {
+            'id': giver.id,
+            'receiver_id': receiver.id,
+            'receiver_name': receiver.name,
+            'status': 'to-ask'
+        }
+    )
+
+
 async def handle_start(message):
     """Handles the `start @giver @receiver` command issued by an admin and starts a
     feedback session. """
     msg_elements = message.content.split()
     # because usage is `start @giver @receiver`
     if len(msg_elements) == 3:
+        # get member or role and confirm command
         try:
-            # confirm command
-            giver = get_member_by_username(msg_elements[1])
-            receiver = get_member_by_username(msg_elements[2])
-            msg = MESSAGE_START_CONFIRMED.format(giver.id, receiver.id)
+            givers, giver_mention = get_member_or_role(msg_elements[1])
+            receivers, receiver_mention = get_member_or_role(msg_elements[2])
+        except RoleOrMemberNotFound as e:
+            msg = str(e)
+            await send_msg(message.channel.user, msg)
+        else:
+            msg = MESSAGE_START_CONFIRMED.format(giver_mention, receiver_mention)
             await send_msg(message.channel.user, msg)
 
             # asking for feedback
-            msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
-            await send_msg(giver, msg)
-            db['members-asked'].update_one(
-                {'id': giver.id},
-                {
-                    '$set': {
-                        'receiver_id': receiver.id,
-                        'receiver_name': receiver.name
-                    }
-                },
-                upsert=True
-            )
+            for giver in givers:
+                for receiver in receivers:
+                    if receiver is not giver:
+                        push_ask_queue(receiver, giver)
+                await process_ask_queue(giver)
 
-        except MemberNotFound as e:
-            msg = str(e)
-            await send_msg(message.channel.user, msg)
     else:
         msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
         await send_msg(message.channel.user, msg)
@@ -154,7 +211,7 @@ async def handle_list(message):
 
 async def handle_send_feedback(message):
     """Handles feedback sent as an answer to the bot's question. """
-    giver_details = db['members-asked'].find_one({'id': message.author.id})
+    giver_details = db['ask-queue'].find_one({'id': message.author.id, 'status': 'asked'})
     giver = message.author
     receiver_id = giver_details['receiver_id']
     receiver_name = giver_details['receiver_name']
@@ -181,7 +238,8 @@ async def handle_send_feedback(message):
     current_feedback = max(received_feedbacks, key=lambda feedback: feedback['datetime'])
     msg = MESSAGE_GOT_FEEDBACK.format(giver.id, current_feedback['message'])
     await send_msg(await client.get_user_info(receiver_id), msg)
-    db['members-asked'].remove({'id': giver.id})
+    db['ask-queue'].remove({'id': giver.id, 'receiver_id': receiver_id})
+    await process_ask_queue(giver)
 
 
 @client.event
@@ -190,6 +248,9 @@ async def on_message(message):
     # we do not want the bot to reply to itself
     if message.author == client.user:
         return
+    # we do not want the bot to reply not in a pm
+    elif message.channel.type.name != 'private':
+        return
     # admin starting the session
     elif message.content.startswith('start') and is_admin(message.author.id):
         await handle_start(message)
@@ -197,7 +258,7 @@ async def on_message(message):
     elif message.content.startswith('list'):
         await handle_list(message)
     # giver sending a feedback
-    elif db['members-asked'].find_one({'id': message.author.id}) is not None:
+    elif db['ask-queue'].find_one({'id': message.author.id, 'status': 'asked'}):
         await handle_send_feedback(message)
     # not matching any case
     else:
@@ -208,7 +269,10 @@ async def on_message(message):
             msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
             await send_msg(message.channel, msg)
     
-    logger.info(LOG_GOT_MESSAGE.format(message.channel.user.name, message.content))
+    try:
+        logger.info(LOG_GOT_MESSAGE.format(message.channel.user.name, message.content))
+    except AttributeError:
+        logger.info(LOG_GOT_MESSAGE.format(message.channel, message.content))
 
 
 if __name__ == '__main__':
