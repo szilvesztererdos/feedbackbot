@@ -102,7 +102,7 @@ def get_member_or_role(name_string):
                                 break
                     break
         if members:
-            return members, server_role.mention
+            return members, '@' + server_role.name
         else:
             raise RoleOrMemberNotFound('Username or role `{}` not found.'.format(name_string))
 
