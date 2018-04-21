@@ -184,7 +184,8 @@ async def handle_start(message):
             # asking for feedback
             for giver in givers:
                 for receiver in receivers:
-                    push_ask_queue(receiver, giver)
+                    if receiver is not giver:
+                        push_ask_queue(receiver, giver)
                 await process_ask_queue(giver)
 
     else:
