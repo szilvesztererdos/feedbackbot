@@ -128,19 +128,41 @@ async def send_msg(user, msg):
     logger.info(LOG_SENDING_MESSAGE.format(user, msg))
     await client.send_message(user, msg)
 
-async def ask_feedback(receiver, giver):
-    msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver.id)
-    await send_msg(giver, msg)
-    db['members-asked'].update_one(
-        {'id': giver.id},
-        {
-            '$set': {
-                'receiver_id': receiver.id,
-                'receiver_name': receiver.name
+
+async def process_ask_queue(giver):
+    next_to_ask = db['ask-queue'].find_one(
+            {
+                'id': giver.id,
+                'status': 'to-ask'
             }
-        },
-        upsert=True
+        )
+    if next_to_ask:
+        receiver_id = next_to_ask['receiver_id']
+        msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver_id)
+        await send_msg(giver, msg)
+        db['ask-queue'].update(
+            {
+                'id': giver.id,
+                'receiver_id': receiver_id
+            },
+            {
+                '$set': {
+                    'status': 'asked'
+                }
+            }
+        )
+
+
+def push_ask_queue(receiver, giver):
+    db['ask-queue'].insert(
+        {
+            'id': giver.id,
+            'receiver_id': receiver.id,
+            'receiver_name': receiver.name,
+            'status': 'to-ask'
+        }
     )
+
 
 async def handle_start(message):
     """Handles the `start @giver @receiver` command issued by an admin and starts a
@@ -162,7 +184,8 @@ async def handle_start(message):
             # asking for feedback
             for giver in givers:
                 for receiver in receivers:
-                    await ask_feedback(receiver, giver)
+                    push_ask_queue(receiver, giver)
+                await process_ask_queue(giver)
 
     else:
         msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
@@ -187,7 +210,7 @@ async def handle_list(message):
 
 async def handle_send_feedback(message):
     """Handles feedback sent as an answer to the bot's question. """
-    giver_details = db['members-asked'].find_one({'id': message.author.id})
+    giver_details = db['ask-queue'].find_one({'id': message.author.id, 'status': 'asked'})
     giver = message.author
     receiver_id = giver_details['receiver_id']
     receiver_name = giver_details['receiver_name']
@@ -214,7 +237,8 @@ async def handle_send_feedback(message):
     current_feedback = max(received_feedbacks, key=lambda feedback: feedback['datetime'])
     msg = MESSAGE_GOT_FEEDBACK.format(giver.id, current_feedback['message'])
     await send_msg(await client.get_user_info(receiver_id), msg)
-    db['members-asked'].remove({'id': giver.id})
+    db['ask-queue'].remove({'id': giver.id, 'receiver_id': receiver_id})
+    await process_ask_queue(giver)
 
 
 @client.event
@@ -233,7 +257,7 @@ async def on_message(message):
     elif message.content.startswith('list'):
         await handle_list(message)
     # giver sending a feedback
-    elif db['members-asked'].find_one({'id': message.author.id}) is not None:
+    elif db['ask-queue'].find_one({'id': message.author.id, 'status': 'asked'}):
         await handle_send_feedback(message)
     # not matching any case
     else:
