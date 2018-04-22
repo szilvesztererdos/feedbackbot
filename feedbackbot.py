@@ -10,16 +10,16 @@ from urllib.parse import urlparse
 from datetime import datetime
 
 # constants
-MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from {} to {}.'
+MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from **{}** to **{}**.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
 MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
 MESSAGE_START_USAGE = 'If you want to start a session, try `start @giver @receiver`!'
-MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback to <@{}>! '
+MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback to **{}**! '
                             'Be specific, extended and give your feedback on behavior. '
                             'And don\'t forget to give more positive feedback than negative!')
-MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given <@!{}> the following feedback: {}. Thank you!'
-MESSAGE_GOT_FEEDBACK = 'You got the following feedback from <@!{}>: {}'
+MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given **{}** the following feedback: {}. Thank you!'
+MESSAGE_GOT_FEEDBACK = 'You got the following feedback from **{}**: {}'
 MESSAGE_LIST_FEEDBACK = 'You have got the following feedback until now: \n{}'
 MESSAGE_NO_FEEDBACK_AVAILABLE = 'Sorry, you haven''t got any feedback until now. Maybe you should ask for one? ;)'
 LOG_GOT_MESSAGE = 'Got message from user {}: {}'
@@ -87,7 +87,7 @@ def get_member_or_role(name_string):
     the bot is connected to. Otherwise, raises an exception."""
     try:
         member = get_member_by_username(name_string)
-        return [member], member.mention
+        return [member], member.nick
     except MemberNotFound:
         members = []
         name_string = name_string.strip('@')
@@ -138,7 +138,8 @@ async def process_ask_queue(giver):
         )
     if next_to_ask:
         receiver_id = next_to_ask['receiver_id']
-        msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver_id)
+        receiver_nick = next_to_ask['receiver_nick']
+        msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver_nick)
         await send_msg(giver, msg)
         db['ask-queue'].update(
             {
@@ -157,8 +158,9 @@ def push_ask_queue(receiver, giver):
     db['ask-queue'].insert(
         {
             'id': giver.id,
+            'giver_nick': giver.nick,
             'receiver_id': receiver.id,
-            'receiver_name': receiver.name,
+            'receiver_nick': receiver.nick,
             'status': 'to-ask'
         }
     )
@@ -199,8 +201,8 @@ async def handle_list(message):
     if receiver_details is not None:
         feedback_list = []
         for feedback in receiver_details['feedback']:
-            feedback_list.append('<@!{}> ({:%Y.%m.%d. %H:%M}): {}\n'.format(
-                feedback['giver'], feedback['datetime'], feedback['message']))
+            feedback_list.append('**{}** ({:%Y.%m.%d. %H:%M}): {}\n'.format(
+                feedback['giver_nick'], feedback['datetime'], feedback['message']))
 
         feedback_list_str = '\n'.join(feedback_list)
         msg = MESSAGE_LIST_FEEDBACK.format(feedback_list_str)
@@ -212,15 +214,20 @@ async def handle_list(message):
 async def handle_send_feedback(message):
     """Handles feedback sent as an answer to the bot's question. """
     giver_details = db['ask-queue'].find_one({'id': message.author.id, 'status': 'asked'})
+    giver_nick = giver_details['giver_nick']
     giver = message.author
     receiver_id = giver_details['receiver_id']
-    receiver_name = giver_details['receiver_name']
+    receiver_nick = giver_details['receiver_nick']
     db['feedbacks'].update_one(
-        {'id': receiver_id},
+        {
+            'id': receiver_id,
+            'receiver_nick': receiver_nick
+        },
         {
             '$push': {
                 'feedback': {
                     'giver': giver.id,
+                    'giver_nick': giver_nick,
                     'message': message.content,
                     'datetime': datetime.now()
                 }
@@ -230,13 +237,13 @@ async def handle_send_feedback(message):
     )
 
     # confirm feedback
-    msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_id, message.content)
+    msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_nick, message.content)
     await send_msg(message.channel.user, msg)
 
     # notify receiver
     received_feedbacks = db['feedbacks'].find_one({'id': receiver_id})['feedback']
     current_feedback = max(received_feedbacks, key=lambda feedback: feedback['datetime'])
-    msg = MESSAGE_GOT_FEEDBACK.format(giver.id, current_feedback['message'])
+    msg = MESSAGE_GOT_FEEDBACK.format(giver_nick, current_feedback['message'])
     await send_msg(await client.get_user_info(receiver_id), msg)
     db['ask-queue'].remove({'id': giver.id, 'receiver_id': receiver_id})
     await process_ask_queue(giver)
