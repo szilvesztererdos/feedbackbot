@@ -22,6 +22,13 @@ MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given **{}** the following feedback: {}. T
 MESSAGE_GOT_FEEDBACK = 'You got the following feedback from **{}**: {}'
 MESSAGE_LIST_FEEDBACK = 'You have got the following feedback until now: \n{}'
 MESSAGE_NO_FEEDBACK_AVAILABLE = 'Sorry, you haven''t got any feedback until now. Maybe you should ask for one? ;)'
+MESSAGE_DEFINE_QUESTIONS = 'You can add new questions by issuing the `questions` command'
+MESSAGE_CURRENT_QUESTIONS = 'These are the questions currently defined: \n{}'
+MESSAGE_NO_QUESTIONS = 'There are no questions defined.'
+MESSAGE_WANT_NEW_QUESTION = 'Do you want to add a new question? (yes/no)'
+MESSAGE_ADD_NEW_QUESTION = 'Please type in your question.'
+MESSAGE_EXIT_DEFINE_QUESTIONS = 'You have chosen to exit adding more questions.'
+MESSAGE_DEFINE_QUESTIONS_YESNO = 'Please respond with either `yes` or `no`.'
 LOG_GOT_MESSAGE = 'Got message from user {}: {}'
 LOG_SENDING_MESSAGE = 'Sending message to user {}: {}'
 ENVVAR_TOKEN = 'FEEDBACKBOT_TOKEN'
@@ -166,34 +173,116 @@ def push_ask_queue(receiver, giver):
     )
 
 
+async def handle_start_questions(message):
+    """Handles the `questions` command issued by an admin and starts a conversation
+    to add questions. """
+
+    if 'questions' in db.collection_names() and db['questions'].count():
+        questions_db = list(db['questions'].find({}, {'content': 1}))
+        questions = [e['content'] for e in questions_db if 'content' in e]
+        msg = MESSAGE_CURRENT_QUESTIONS.format(questions)
+        # TODO: list questions
+        await send_msg(message.channel.user, msg)
+    else:
+        msg = MESSAGE_NO_QUESTIONS
+
+    db['questions'].insert(
+        {
+            'status': 'pending'
+        }
+    )
+    msg = MESSAGE_WANT_NEW_QUESTION
+    await send_msg(message.channel.user, msg)
+
+
+async def handle_want_question(message):
+    """Handles responding with yes/no while admin in question defining session. """
+
+    if message.content.lower() == 'yes':
+        db['questions'].update_one(
+            {
+                'status': 'pending'
+            },
+            {
+                '$set': {
+                    'status': 'asked'
+                }
+            }
+        )
+        msg = MESSAGE_ADD_NEW_QUESTION
+        await send_msg(message.channel.user, msg)
+    elif message.content.lower() == 'no':
+        db['questions'].remove(
+            {
+                'status': 'pending'
+            }
+        )
+        msg = MESSAGE_EXIT_DEFINE_QUESTIONS
+        await send_msg(message.channel.user, msg)
+    else:
+        msg = MESSAGE_DEFINE_QUESTIONS_YESNO
+        await send_msg(message.channel.user, msg)
+
+
+async def handle_add_question(message):
+    """Handles adding new question while admin in question defining session. """
+
+    # inserting new question into database
+    db['questions'].insert(
+        {
+            'content': message.content,
+            'status': 'closed'
+        }
+    )
+
+    # asking whether admin wants new question to add
+    db['questions'].update_one(
+        {
+            'status': 'asked'
+        },
+        {
+            '$set': {
+                'status': 'pending'
+            }
+        }
+    )
+    msg = MESSAGE_WANT_NEW_QUESTION
+    await send_msg(message.channel.user, msg)
+
+
 async def handle_start(message):
     """Handles the `start @giver @receiver` command issued by an admin and starts a
     feedback session. """
-    msg_elements = message.content.split()
-    # because usage is `start @giver @receiver`
-    if len(msg_elements) == 3:
-        # get member or role and confirm command
-        try:
-            givers, giver_mention = get_member_or_role(msg_elements[1])
-            receivers, receiver_mention = get_member_or_role(msg_elements[2])
-        except RoleOrMemberNotFound as e:
-            msg = str(e)
-            await send_msg(message.channel.user, msg)
+
+    # if we have questions defined
+    if 'questions' in db.collection_names():
+        msg_elements = message.content.split()
+        # because usage is `start @giver @receiver`
+        if len(msg_elements) == 3:
+            # get member or role and confirm command
+            try:
+                givers, giver_mention = get_member_or_role(msg_elements[1])
+                receivers, receiver_mention = get_member_or_role(msg_elements[2])
+            except RoleOrMemberNotFound as e:
+                msg = str(e)
+                await send_msg(message.channel.user, msg)
+            else:
+                msg = MESSAGE_START_CONFIRMED.format(giver_mention, receiver_mention)
+                await send_msg(message.channel.user, msg)
+
+                # asking for feedback
+                for giver in givers:
+                    for receiver in receivers:
+                        if receiver is not giver:
+                            push_ask_queue(receiver, giver)
+                    await process_ask_queue(giver)
+
         else:
-            msg = MESSAGE_START_CONFIRMED.format(giver_mention, receiver_mention)
+            msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
             await send_msg(message.channel.user, msg)
-
-            # asking for feedback
-            for giver in givers:
-                for receiver in receivers:
-                    if receiver is not giver:
-                        push_ask_queue(receiver, giver)
-                await process_ask_queue(giver)
-
     else:
-        msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
+        msg = MESSAGE_NO_QUESTIONS + ' ' + MESSAGE_DEFINE_QUESTIONS
         await send_msg(message.channel.user, msg)
-
 
 async def handle_list(message):
     """Handles `list` command and lists given feedback messages. """
@@ -261,6 +350,17 @@ async def on_message(message):
     # admin starting the session
     elif message.content.startswith('start') and is_admin(message.author.id):
         await handle_start(message)
+    # admin starting question defining
+    elif message.content.startswith('questions define') and is_admin(message.author.id):
+        await handle_start_questions(message)
+    # admin answering yes/no while defining questions
+    elif 'questions' in db.collection_names() and db['questions'].find_one({'status': 'pending'}) and \
+            is_admin(message.author.id):
+        await handle_want_question(message)
+    # admin typing in new question
+    elif 'questions' in db.collection_names() and db['questions'].find_one({'status': 'asked'}) and \
+            is_admin(message.author.id):
+        await handle_add_question(message)
     # receiver listing feedback
     elif message.content.startswith('list'):
         await handle_list(message)
