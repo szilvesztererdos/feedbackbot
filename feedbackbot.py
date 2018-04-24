@@ -19,7 +19,6 @@ MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback
                             'Be specific, extended and give your feedback on behavior. '
                             'And don\'t forget to give more positive feedback than negative!')
 MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given **{}** the following feedback: {}. Thank you!'
-MESSAGE_GOT_FEEDBACK = 'You got the following feedback from **{}**: {}'
 MESSAGE_LIST_FEEDBACK = 'You have got the following feedback until now: \n{}'
 MESSAGE_NO_FEEDBACK_AVAILABLE = 'Sorry, you haven''t got any feedback until now. Maybe you should ask for one? ;)'
 MESSAGE_DEFINE_QUESTIONS = 'You can add new questions by issuing the `questions` command'
@@ -29,6 +28,7 @@ MESSAGE_WANT_NEW_QUESTION = 'Do you want to add a new question? (yes/no)'
 MESSAGE_ADD_NEW_QUESTION = 'Please type in your question.'
 MESSAGE_EXIT_DEFINE_QUESTIONS = 'You have chosen to exit adding more questions.'
 MESSAGE_DEFINE_QUESTIONS_YESNO = 'Please respond with either `yes` or `no`.'
+MESSAGE_NEXT_QUESTION = 'The next question is: '
 LOG_GOT_MESSAGE = 'Got message from user {}: {}'
 LOG_SENDING_MESSAGE = 'Sending message to user {}: {}'
 ENVVAR_TOKEN = 'FEEDBACKBOT_TOKEN'
@@ -136,18 +136,25 @@ async def send_msg(user, msg):
     await client.send_message(user, msg)
 
 
-async def process_ask_queue(giver):
-    next_to_ask = db['ask-queue'].find_one(
+async def process_ask_queue(giver, first_time=False):
+    next_to_ask_details = db['ask-queue'].find_one(
             {
                 'id': giver.id,
                 'status': 'to-ask'
             }
         )
-    if next_to_ask:
-        receiver_id = next_to_ask['receiver_id']
-        receiver_nick = next_to_ask['receiver_nick']
-        msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver_nick)
+    if next_to_ask_details:
+        receiver_id = next_to_ask_details['receiver_id']
+        receiver_nick = next_to_ask_details['receiver_nick']
+        question_content = next_to_ask_details['question_content']
+
+        if first_time:
+            msg = MESSAGE_ASK_FOR_FEEDBACK.format(receiver_nick)
+            await send_msg(giver, msg)
+
+        msg = MESSAGE_NEXT_QUESTION + question_content
         await send_msg(giver, msg)
+
         db['ask-queue'].update(
             {
                 'id': giver.id,
@@ -161,13 +168,14 @@ async def process_ask_queue(giver):
         )
 
 
-def push_ask_queue(receiver, giver):
+def push_ask_queue(receiver, giver, question):
     db['ask-queue'].insert(
         {
             'id': giver.id,
             'giver_nick': giver.nick,
             'receiver_id': receiver.id,
             'receiver_nick': receiver.nick,
+            'question_content': question['content'],
             'status': 'to-ask'
         }
     )
@@ -274,8 +282,9 @@ async def handle_start(message):
                 for giver in givers:
                     for receiver in receivers:
                         if receiver is not giver:
-                            push_ask_queue(receiver, giver)
-                    await process_ask_queue(giver)
+                            for question in db['questions'].find({'status': 'closed'}):
+                                push_ask_queue(receiver, giver, question)
+                    await process_ask_queue(giver, True)
 
         else:
             msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
@@ -286,14 +295,27 @@ async def handle_start(message):
 
 async def handle_list(message):
     """Handles `list` command and lists given feedback messages. """
-    receiver_details = db['feedbacks'].find_one({'id': message.author.id})
-    if receiver_details is not None:
-        feedback_list = []
-        for feedback in receiver_details['feedback']:
-            feedback_list.append('**{}** ({:%Y.%m.%d. %H:%M}): {}\n'.format(
-                feedback['giver_nick'], feedback['datetime'], feedback['message']))
+    feedback_details = db['feedbacks'].find_one({'id': message.author.id})
+    if feedback_details is not None:
+        question_list = {}
+        for feedback in feedback_details['feedback']:
+            if feedback['question_content'] not in question_list:
+                question_list[feedback['question_content']] = []
 
-        feedback_list_str = '\n'.join(feedback_list)
+            question_list[feedback['question_content']].append(
+                '**{}** ({:%Y.%m.%d. %H:%M}): {}'.format(
+                    feedback['giver_nick'],
+                    feedback['datetime'],
+                    feedback['message']
+                )
+            )
+
+        feedback_list_str = ''
+        for question_content, feedback_list in question_list.items():
+            feedback_list_str += '\n*' + question_content + '*\n'
+            for feedback_str in feedback_list:            
+                feedback_list_str += '\t' + feedback_str + '\n'
+
         msg = MESSAGE_LIST_FEEDBACK.format(feedback_list_str)
     else:
         msg = MESSAGE_NO_FEEDBACK_AVAILABLE
@@ -302,11 +324,13 @@ async def handle_list(message):
 
 async def handle_send_feedback(message):
     """Handles feedback sent as an answer to the bot's question. """
-    giver_details = db['ask-queue'].find_one({'id': message.author.id, 'status': 'asked'})
-    giver_nick = giver_details['giver_nick']
+    ask_details = db['ask-queue'].find_one({'id': message.author.id, 'status': 'asked'})
+    giver_nick = ask_details['giver_nick']
     giver = message.author
-    receiver_id = giver_details['receiver_id']
-    receiver_nick = giver_details['receiver_nick']
+    receiver_id = ask_details['receiver_id']
+    receiver_nick = ask_details['receiver_nick']
+    question_content = ask_details['question_content']
+
     db['feedbacks'].update_one(
         {
             'id': receiver_id,
@@ -317,6 +341,7 @@ async def handle_send_feedback(message):
                 'feedback': {
                     'giver': giver.id,
                     'giver_nick': giver_nick,
+                    'question_content': question_content,
                     'message': message.content,
                     'datetime': datetime.now()
                 }
@@ -329,12 +354,8 @@ async def handle_send_feedback(message):
     msg = MESSAGE_FEEDBACK_CONFIRMED.format(receiver_nick, message.content)
     await send_msg(message.channel.user, msg)
 
-    # notify receiver
-    received_feedbacks = db['feedbacks'].find_one({'id': receiver_id})['feedback']
-    current_feedback = max(received_feedbacks, key=lambda feedback: feedback['datetime'])
-    msg = MESSAGE_GOT_FEEDBACK.format(giver_nick, current_feedback['message'])
-    await send_msg(await client.get_user_info(receiver_id), msg)
-    db['ask-queue'].remove({'id': giver.id, 'receiver_id': receiver_id})
+    # remove from queue and continue processing
+    db['ask-queue'].remove({'id': giver.id, 'receiver_id': receiver_id, 'question_content': question_content})
     await process_ask_queue(giver)
 
 
