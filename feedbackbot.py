@@ -13,14 +13,18 @@ from datetime import datetime
 MESSAGE_START_CONFIRMED = 'Okay. Asking feedback from **{}** to **{}**.'
 MESSAGE_WRONG_FORMAT = 'Wrong usage of command.'
 MESSAGE_NOT_A_COMMAND_ADMIN = 'Sorry, I can\'t recognize that command.'
-MESSAGE_NOT_A_COMMAND_NOTADMIN = 'Hi! There is no feedback session currently, we will let you know when it is.'
-MESSAGE_START_USAGE = 'If you want to start a session, try `start @giver @receiver`!'
+MESSAGE_NOT_A_COMMAND_NOTADMIN = '''Hi! There is no feedback session currently, we will let you know when it is.
+You can check whether you received any feedback by typing in the `list` command.'''
+MESSAGE_ADMIN_USAGE = '''If you want to start a session, type `start @giver @receiver`.
+If you want to define new questions, type `questions define`.
+If you want to list feedback given to you, type `list`.'''
 MESSAGE_ASK_FOR_FEEDBACK = ('Hi! It\'s feedback time! Please write your feedback to **{}**! '
                             'Be specific, extended and give your feedback on behavior. '
                             'And don\'t forget to give more positive feedback than negative!')
 MESSAGE_FEEDBACK_CONFIRMED = 'You\'ve given **{}** the following feedback: {}. Thank you!'
 MESSAGE_LIST_FEEDBACK = 'You have got the following feedback until now: \n{}'
-MESSAGE_NO_FEEDBACK_AVAILABLE = 'Sorry, you haven''t got any feedback until now. Maybe you should ask for one? ;)'
+MESSAGE_NO_FEEDBACK_AVAILABLE = '''Sorry, you haven''t got any feedback until now.
+Ask an admin to start a feedback session, so you can got feedback.'''
 MESSAGE_DEFINE_QUESTIONS = 'You can add new questions by issuing the `questions` command'
 MESSAGE_CURRENT_QUESTIONS = 'These are the questions currently defined: \n{}'
 MESSAGE_NO_QUESTIONS = 'There are no questions defined.'
@@ -287,7 +291,7 @@ async def handle_start(message):
                     await process_ask_queue(giver, True)
 
         else:
-            msg = MESSAGE_WRONG_FORMAT + ' ' + MESSAGE_START_USAGE
+            msg = MESSAGE_WRONG_FORMAT + '\n' + MESSAGE_ADMIN_USAGE
             await send_msg(message.channel.user, msg)
     else:
         msg = MESSAGE_NO_QUESTIONS + ' ' + MESSAGE_DEFINE_QUESTIONS
@@ -391,7 +395,7 @@ async def on_message(message):
     # not matching any case
     else:
         if is_admin(message.author.id):
-            msg = MESSAGE_NOT_A_COMMAND_ADMIN + ' ' + MESSAGE_START_USAGE
+            msg = MESSAGE_NOT_A_COMMAND_ADMIN + '\n' + MESSAGE_ADMIN_USAGE
             await send_msg(message.channel, msg)
         else:
             msg = MESSAGE_NOT_A_COMMAND_NOTADMIN
