@@ -28,11 +28,16 @@ Ask an admin to start a feedback session, so you can got feedback.'''
 MESSAGE_DEFINE_QUESTIONS = 'You can add new questions by issuing the `questions` command'
 MESSAGE_CURRENT_QUESTIONS = 'These are the questions currently defined: \n{}'
 MESSAGE_NO_QUESTIONS = 'There are no questions defined.'
-MESSAGE_WANT_NEW_QUESTION = 'Do you want to add a new question? (yes/no)'
+MESSAGE_WANT_NEW_QUESTION = 'Do you want to add a new question? (`yes`/`no`)'
 MESSAGE_ADD_NEW_QUESTION = 'Please type in your question.'
 MESSAGE_EXIT_DEFINE_QUESTIONS = 'You have chosen to exit adding more questions.'
 MESSAGE_DEFINE_QUESTIONS_YESNO = 'Please respond with either `yes` or `no`.'
 MESSAGE_NEXT_QUESTION = 'The next question is: '
+MESSAGE_WANT_REMOVE_QUESTION = 'Please type in the number of the question you want to remove '
+MESSAGE_EXIT_REMOVE_QUESTIONS = 'You have chosen to exit removing more questions. '
+MESSAGE_REMOVE_QUESTIONS_ONLY_NUMBERS = 'Please choose from the list of numbers corresponding to the questions '
+MESSAGE_REMOVE_QUESTIONS_CANCEL = 'or `cancel` if you want to exit question removal.'
+MESSAGE_REMOVAL_SUCCESS = 'Successfully removed question.'
 LOG_GOT_MESSAGE = 'Got message from user {}: {}'
 LOG_SENDING_MESSAGE = 'Sending message to user {}: {}'
 ENVVAR_TOKEN = 'FEEDBACKBOT_TOKEN'
@@ -185,23 +190,53 @@ def push_ask_queue(receiver, giver, question):
     )
 
 
-async def handle_start_questions(message):
-    """Handles the `questions` command issued by an admin and starts a conversation
-    to add questions. """
+async def list_questions(message):
+    """List questions defined in the database with numbering. """
 
     if 'questions' in db.collection_names() and db['questions'].count():
         questions_db = list(db['questions'].find({}, {'content': 1}))
-        questions = [e['content'] for e in questions_db if 'content' in e]
-        msg = MESSAGE_CURRENT_QUESTIONS.format(questions)
-        # TODO: list questions
+        questions_with_index_str = \
+            ['{}. {}'.format(i+1, e['content']) for i, e in enumerate(questions_db) if 'content' in e]
+        questions_str = '\n'.join(questions_with_index_str)
+        msg = MESSAGE_CURRENT_QUESTIONS.format(questions_str)
         await send_msg(message.channel.user, msg)
     else:
         msg = MESSAGE_NO_QUESTIONS
 
-    db['questions'].insert(
+
+def renumber_questions():
+    for counter, question in enumerate(db['questions'].find({})):
+        db['questions'].update_one(
+            {
+                '_id': question['_id']
+            },
+            {
+                '$set': {
+                    'index': str(counter + 1)
+                }
+            },
+            upsert=True
+        )
+
+
+async def handle_start_questions_define(message):
+    """Handles the `questions` command issued by an admin and starts a conversation
+    to add questions. """
+
+    await list_questions(message)
+
+    db['settings'].update_one(
         {
-            'status': 'pending'
-        }
+            'status': {
+                '$exists': True
+            }
+        },
+        {
+            '$set': {
+                'status': 'questions-define-pending'
+            }
+        },
+        upsert=True
     )
     msg = MESSAGE_WANT_NEW_QUESTION
     await send_msg(message.channel.user, msg)
@@ -211,22 +246,25 @@ async def handle_want_question(message):
     """Handles responding with yes/no while admin in question defining session. """
 
     if message.content.lower() == 'yes':
-        db['questions'].update_one(
+        db['settings'].update_one(
             {
-                'status': 'pending'
+                'status': {
+                    '$exists': True
+                }
             },
             {
                 '$set': {
-                    'status': 'asked'
+                    'status': 'questions-define-new'
                 }
-            }
+            },
+            upsert=True
         )
         msg = MESSAGE_ADD_NEW_QUESTION
         await send_msg(message.channel.user, msg)
     elif message.content.lower() == 'no':
-        db['questions'].remove(
+        db['settings'].remove(
             {
-                'status': 'pending'
+                'status': 'questions-define-pending'
             }
         )
         msg = MESSAGE_EXIT_DEFINE_QUESTIONS
@@ -242,24 +280,80 @@ async def handle_add_question(message):
     # inserting new question into database
     db['questions'].insert(
         {
-            'content': message.content,
-            'status': 'closed'
+            'content': message.content
         }
     )
 
+    renumber_questions()
+
     # asking whether admin wants new question to add
-    db['questions'].update_one(
+    db['settings'].update_one(
         {
-            'status': 'asked'
+            'status': {
+                '$exists': True
+            }
         },
         {
             '$set': {
-                'status': 'pending'
+                'status': 'questions-define-pending'
             }
-        }
+        },
+        upsert=True
     )
+    await list_questions(message)
     msg = MESSAGE_WANT_NEW_QUESTION
     await send_msg(message.channel.user, msg)
+
+
+async def handle_start_question_removal(message):
+    """Handles `question remove` command issued by an admin, lists the currently defined questions
+    and gives an opportunity to remove from them. """
+
+    await list_questions(message)
+
+    msg = MESSAGE_WANT_REMOVE_QUESTION + MESSAGE_REMOVE_QUESTIONS_CANCEL
+    await send_msg(message.channel.user, msg)
+
+    db['settings'].update_one(
+        {
+            'status': {
+                '$exists': True
+            }
+        },
+        {
+            '$set': {
+                'status': 'questions-remove-pending'
+            }
+        },
+        upsert=True
+    )
+
+
+async def handle_question_remove(message):
+    """Handles removing questions while admin in question removal session. """
+
+    if message.content.lower() == 'cancel':
+        db['settings'].remove(
+            {
+                'status': 'questions-remove-pending'
+            }
+        )
+        msg = MESSAGE_EXIT_REMOVE_QUESTIONS
+        await send_msg(message.channel.user, msg)
+    # we can assume that indexes are continous since we renumber them after each insert/remove with renumber_questions()
+    elif message.content in [str(i+1) for i in range(db['questions'].count())]:
+        db['questions'].remove(
+            {
+                'index': message.content
+            }
+        )
+        renumber_questions()
+        msg = MESSAGE_REMOVAL_SUCCESS + '\n' + MESSAGE_WANT_REMOVE_QUESTION + MESSAGE_REMOVE_QUESTIONS_CANCEL
+        await list_questions(message)
+        await send_msg(message.channel.user, msg)
+    else:
+        msg = MESSAGE_REMOVE_QUESTIONS_ONLY_NUMBERS + MESSAGE_REMOVE_QUESTIONS_CANCEL
+        await send_msg(message.channel.user, msg)
 
 
 async def handle_start(message):
@@ -286,7 +380,7 @@ async def handle_start(message):
                 for giver in givers:
                     for receiver in receivers:
                         if receiver is not giver:
-                            for question in db['questions'].find({'status': 'closed'}):
+                            for question in db['questions'].find({}):
                                 push_ask_queue(receiver, giver, question)
                     await process_ask_queue(giver, True)
 
@@ -377,15 +471,25 @@ async def on_message(message):
         await handle_start(message)
     # admin starting question defining
     elif message.content.startswith('questions define') and is_admin(message.author.id):
-        await handle_start_questions(message)
+        await handle_start_questions_define(message)
     # admin answering yes/no while defining questions
-    elif 'questions' in db.collection_names() and db['questions'].find_one({'status': 'pending'}) and \
+    elif 'settings' in db.collection_names() and \
+            db['settings'].find_one({'status': 'questions-define-pending'}) and \
             is_admin(message.author.id):
         await handle_want_question(message)
     # admin typing in new question
-    elif 'questions' in db.collection_names() and db['questions'].find_one({'status': 'asked'}) and \
+    elif 'settings' in db.collection_names() and \
+            db['settings'].find_one({'status': 'questions-define-new'}) and \
             is_admin(message.author.id):
         await handle_add_question(message)
+    # admin starting question removal
+    elif message.content.startswith('questions remove') and is_admin(message.author.id):
+        await handle_start_question_removal(message)
+    # admin remove question
+    elif 'settings' in db.collection_names() and \
+            db['settings'].find_one({'status': 'questions-remove-pending'}) and \
+            is_admin(message.author.id):
+        await handle_question_remove(message)
     # receiver listing feedback
     elif message.content.startswith('list'):
         await handle_list(message)
